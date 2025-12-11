@@ -3,14 +3,38 @@ import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-import traceback # <--- CRITICAL IMPORT for debugging
+import traceback 
+import logging # <--- NEW: Standard Python logging module
 
 # FINAL FIX: Correct relative imports for sibling modules
 from .config import UPLOAD_FOLDER, LLM_MODEL_NAME
-from .rag.vector_store import add_documents, query_index
+# Assuming rewrite_answer is also imported from vector_store now for completeness
+from .rag.vector_store import add_documents, query_index, rewrite_answer 
 
 app = Flask(__name__)
 CORS(app) 
+
+# --- PRODUCTION CONFIGURATION ---
+
+# 1. Set logger format
+if os.getenv('FLASK_ENV') == 'production':
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.WARNING)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    app.logger.addHandler(handler)
+    
+# 2. Global 500 Error Handler (Catches exceptions that escape the route handlers)
+@app.errorhandler(500)
+def internal_error(error):
+    # Log the full traceback to the application logs (not the client)
+    app.logger.error('Server Error: %s', (error), exc_info=True)
+    # Return a generic, safe message to the user
+    return jsonify({
+        'error': 'An unexpected server error occurred. Please try again later.'
+    }), 500
+
+# --------------------------------
 
 # Configuration for file uploads
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -36,14 +60,10 @@ def upload_file():
         file_saved = False
 
         try:
-            # Save file to disk
             file.save(filepath)
             file_saved = True
 
-            # Call RAG Indexing
             chunks_indexed = add_documents(filepath)
-            
-            # Successful cleanup
             os.remove(filepath)
             
             return jsonify({
@@ -52,16 +72,14 @@ def upload_file():
             })
             
         except Exception as e:
-            # --- CRITICAL ACTION: Print full traceback for debugging ---
-            traceback.print_exc()
-            # --------------------------------------------------------
+            # --- PRODUCTION FIX: Log the error, do NOT expose traceback ---
+            app.logger.error('Indexing failed for file %s: %s', filename, str(e), exc_info=True)
             
-            # Cleanup the saved file if the error occurred after saving
             if file_saved and os.path.exists(filepath):
                 os.remove(filepath)
                 
-            # Return the error message to the frontend
-            return jsonify({'error': f'Indexing failed: {str(e)}'}), 500
+            # Return a generic, safe 500 message
+            return jsonify({'error': 'Indexing failed due to an internal server issue.'}), 500
 
     return jsonify({'error': 'File type not allowed'}), 400
 
@@ -81,12 +99,36 @@ def ask_question():
             'sources': sources
         })
     except Exception as e:
-        # --- CRITICAL ACTION: Print full traceback for debugging ---
-        traceback.print_exc()
-        # --------------------------------------------------------
+        # --- PRODUCTION FIX: Log the error, do NOT expose traceback ---
+        app.logger.error('Query failed for question "%s": %s', question, str(e), exc_info=True)
         
-        print(f"Error querying index: {e}")
-        return jsonify({'error': 'Failed to retrieve answer from RAG system. Check backend logs for traceback.'}), 500
+        # Return a generic, safe 500 message
+        return jsonify({'error': 'Failed to retrieve answer due to an internal server issue.'}), 500
+
+# Assuming /rewrite is included in your production requirements
+@app.route('/rewrite', methods=['POST'])
+def rewrite_answer_endpoint():
+    data = request.get_json()
+    original_answer = data.get('answer')
+    style_request = data.get('style')
+    
+    if not original_answer or not style_request:
+        return jsonify({'error': 'Missing original answer or style request'}), 400
+
+    try:
+        new_answer = rewrite_answer(original_answer, style_request)
+        
+        return jsonify({
+            'original_answer': original_answer,
+            'style_request': style_request,
+            'new_answer': new_answer
+        })
+        
+    except Exception as e:
+        app.logger.error('Rewrite failed for style "%s": %s', style_request, str(e), exc_info=True)
+        return jsonify({'error': 'Failed to rewrite answer due to an internal server issue.'}), 500
+
 
 if __name__ == '__main__':
+    # When running directly, ensure FLASK_ENV is set for production behavior
     app.run(host='0.0.0.0', port=5000)
