@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:5000";
+const API_BASE = "https://vamsi1103-rag-backend.hf.space";
 
 const uploadForm = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
@@ -222,3 +222,4 @@ newChatBtn.addEventListener("click", () => {
 
 /* Initial */
 addWelcomeMessage();
+
