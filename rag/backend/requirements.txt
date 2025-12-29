@@ -1,4 +1,4 @@
-Flask
+
 Flask-CORS
 pypdf
 sentence-transformers
@@ -11,3 +11,4 @@ llama-index-embeddings-google
 llama-index-llms-google-genai  # <--- NEW REQUIRED PACKAGE
 flask
 gunicorn
+
