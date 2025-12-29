@@ -129,6 +129,7 @@ def rewrite_answer_endpoint():
         return jsonify({'error': 'Failed to rewrite answer due to an internal server issue.'}), 500
 
 
-if __name__ == '__main__':
-    # When running directly, ensure FLASK_ENV is set for production behavior
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860)
+
+
