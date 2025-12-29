@@ -1,5 +1,18 @@
 const API_BASE = "https://vamsi1103-rag-backend.hf.space";
 
+/* -------------------------------
+   SESSION HANDLING (CRITICAL)
+--------------------------------*/
+let SESSION_ID = crypto.randomUUID();
+
+function resetSession() {
+    SESSION_ID = crypto.randomUUID();
+    console.log("New session:", SESSION_ID);
+}
+
+/* -------------------------------
+   DOM ELEMENTS
+--------------------------------*/
 const uploadForm = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const uploadStatus = document.getElementById("upload-status");
@@ -10,18 +23,19 @@ const chatMessages = document.getElementById("chat-messages");
 const askBtn = document.getElementById("ask-btn");
 const newChatBtn = document.getElementById("new-chat-btn");
 
+/* -------------------------------
+   UI HELPERS
+--------------------------------*/
 function scrollToBottom() {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-/* Creates a user/assistant row */
 function createMessageRow(role) {
     const row = document.createElement("div");
     row.classList.add("message-row", role);
 
     const avatar = document.createElement("div");
-    avatar.classList.add("avatar");
-    avatar.classList.add(role === "user" ? "user-avatar" : "assistant-avatar");
+    avatar.classList.add("avatar", role === "user" ? "user-avatar" : "assistant-avatar");
     avatar.textContent = role === "user" ? "U" : "A";
 
     const bubble = document.createElement("div");
@@ -37,8 +51,9 @@ function createMessageRow(role) {
     return { row, bubble };
 }
 
-/* Append sources list */
 function appendSourcesToBubble(bubble, sources) {
+    if (!sources || sources.length === 0) return;
+
     const heading = document.createElement("div");
     heading.innerText = "Sources:";
     heading.style.marginTop = "8px";
@@ -47,70 +62,51 @@ function appendSourcesToBubble(bubble, sources) {
 
     const ul = document.createElement("ul");
     ul.style.fontSize = "12px";
-    ul.style.marginTop = "4px";
 
     sources.forEach(s => {
         const li = document.createElement("li");
-        const fname = s.metadata?.filename || "doc";
-        const idx = s.metadata?.chunk_index ?? "-";
-        li.textContent = `${fname} (chunk ${idx})`;
+        li.textContent = s.filename || "document";
         ul.appendChild(li);
     });
 
     bubble.appendChild(ul);
 }
 
-/* Normal message bubble */
 function addMessage(role, text, sources = null) {
     const { row, bubble } = createMessageRow(role);
-
     const msg = document.createElement("div");
     msg.classList.add("message-text");
     msg.textContent = text;
     bubble.appendChild(msg);
 
-    if (role === "assistant" && sources) {
-        appendSourcesToBubble(bubble, sources);
-    }
-
+    if (role === "assistant") appendSourcesToBubble(bubble, sources);
     chatMessages.appendChild(row);
     scrollToBottom();
-    return row;
 }
 
-/* Typing indicator bubble */
 function addTypingIndicator() {
     const { row, bubble } = createMessageRow("assistant");
-    const typingDiv = document.createElement("div");
-    typingDiv.classList.add("typing");
-    for (let i = 0; i < 3; i++) {
-        const dot = document.createElement("div");
-        dot.classList.add("dot");
-        typingDiv.appendChild(dot);
-    }
-    bubble.appendChild(typingDiv);
+    const typing = document.createElement("div");
+    typing.classList.add("typing");
+    typing.innerHTML = "<span></span><span></span><span></span>";
+    bubble.appendChild(typing);
     chatMessages.appendChild(row);
     scrollToBottom();
     return row;
 }
 
-/* Typewriter effect */
-function typeWriter(element, text, speed = 20, done) {
+function typeWriter(el, text, speed = 16, done) {
     let i = 0;
     function step() {
         if (i < text.length) {
-            element.textContent += text.charAt(i);
-            i++;
+            el.textContent += text.charAt(i++);
             scrollToBottom();
             setTimeout(step, speed);
-        } else {
-            if (done) done();
-        }
+        } else if (done) done();
     }
     step();
 }
 
-/* Assistant message with typing */
 function addAssistantMessageTypewriter(text, sources = null) {
     const { row, bubble } = createMessageRow("assistant");
     const msg = document.createElement("div");
@@ -119,24 +115,25 @@ function addAssistantMessageTypewriter(text, sources = null) {
     chatMessages.appendChild(row);
 
     typeWriter(msg, text, 16, () => {
-        if (sources) {
-            appendSourcesToBubble(bubble, sources);
-            scrollToBottom();
-        }
+        appendSourcesToBubble(bubble, sources);
     });
 }
 
-/* Welcome message */
+/* -------------------------------
+   WELCOME
+--------------------------------*/
 function addWelcomeMessage() {
     addAssistantMessageTypewriter(
-        "Hi 👋, upload a PDF or text file and then ask me anything about it."
+        "Hi 👋 Upload one or more PDFs, then ask questions based only on them."
     );
 }
 
-/* Upload handler */
+/* -------------------------------
+   UPLOAD HANDLER
+--------------------------------*/
 uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!fileInput.files[0]) return;
+    if (!fileInput.files.length) return;
 
     uploadStatus.innerText = "Uploading & indexing...";
 
@@ -146,47 +143,53 @@ uploadForm.addEventListener("submit", async (e) => {
     try {
         const res = await fetch(`${API_BASE}/upload`, {
             method: "POST",
-            body: formData,
+            headers: {
+                "X-Session-ID": SESSION_ID
+            },
+            body: formData
         });
 
         const data = await res.json();
 
         if (res.ok) {
-            uploadStatus.innerText = `Indexed ${data.chunks_indexed} chunks.`;
+            uploadStatus.innerText = `Indexed ${data.chunks_indexed} chunks`;
             addAssistantMessageTypewriter(
-                `Your document "${fileInput.files[0].name}" has been uploaded and indexed.`
+                `📄 "${fileInput.files[0].name}" indexed successfully.`
             );
         } else {
-            uploadStatus.innerText = data.error || "Upload failed.";
-            addMessage("assistant", data.error);
+            uploadStatus.innerText = data.error;
         }
     } catch {
         uploadStatus.innerText = "Network error";
     }
 });
 
-/* Ask handler */
+/* -------------------------------
+   ASK HANDLER
+--------------------------------*/
 chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const question = questionInput.value.trim();
     if (!question) return;
 
     addMessage("user", question);
-    askBtn.disabled = true;
     questionInput.value = "";
+    askBtn.disabled = true;
 
     const typingRow = addTypingIndicator();
 
     try {
         const res = await fetch(`${API_BASE}/ask`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question }),
+            headers: {
+                "Content-Type": "application/json",
+                "X-Session-ID": SESSION_ID
+            },
+            body: JSON.stringify({ question })
         });
 
         const data = await res.json();
-
-        if (typingRow.parentNode) chatMessages.removeChild(typingRow);
+        typingRow.remove();
 
         if (res.ok) {
             addAssistantMessageTypewriter(data.answer, data.sources);
@@ -194,32 +197,24 @@ chatForm.addEventListener("submit", async (e) => {
             addAssistantMessageTypewriter(data.error);
         }
     } catch {
-        if (typingRow.parentNode) chatMessages.removeChild(typingRow);
+        typingRow.remove();
         addAssistantMessageTypewriter("Network error");
     } finally {
         askBtn.disabled = false;
     }
 });
 
-/* Enter = send, Shift+Enter = newline */
-questionInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        chatForm.dispatchEvent(new Event("submit"));
-    }
-});
-
-questionInput.addEventListener("input", () => {
-    questionInput.style.height = "auto";
-    questionInput.style.height = Math.min(questionInput.scrollHeight, 120) + "px";
-});
-
-/* New Chat */
+/* -------------------------------
+   NEW CHAT (RESET SESSION)
+--------------------------------*/
 newChatBtn.addEventListener("click", () => {
-    chatMessages.innerHTML = "";
+    resetSession();              // 🔥 NEW SESSION
+    chatMessages.innerHTML = ""; // Clear UI
+    uploadStatus.innerText = "";
     addWelcomeMessage();
 });
 
-/* Initial */
+/* -------------------------------
+   INIT
+--------------------------------*/
 addWelcomeMessage();
-
